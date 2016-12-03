@@ -21,6 +21,13 @@ my $ID = 0;
 my $paste_dir = app->config('paste_dir') || $ENV{PASTE_DIR} || 'paste';
 -d $paste_dir or File::Path::mkpath($paste_dir) or die "mkpath $paste_dir: $!";
 
+# All the urls pastes should be replicated to, including my own root:
+my $paste_peers = exists $ENV{MOJO_CONFIG}
+                    ? app->config('paste_peers')    || []
+                    : [split ' ', $ENV{PASTE_PEERS} || '']
+                    ;
+my @peer_urls = map Mojo::URL->new($_), @$paste_peers;
+
 helper no_such_paste => sub {
   my ($c, $err) = @_;
   $c->app->log->debug("no_such_paste: $err");
@@ -72,13 +79,72 @@ post
 
   return $c->render('pastebin', placeholder => 'You neeed to enter some characters!', status => 400)
     unless $paste =~ /\w/;
-  my $id = substr Mojo::Util::md5_sum($$ . time . $ID++), 0, 12;
+  my $id = Mojo::Util::sha1_sum(
+            encode 'UTF-8',
+            $paste
+  );
+  $c->delay(
+    sub {
+        my $delay = shift;
+
+        if (not @peer_urls) { 
+            # 0 peers listed, just write locally.
+            return $c->paste($id => $paste, $delay->begin(1,1))
+        }
+
+        # With peers listed, we replicate to everyone.
+        # Which means I have to replicate to myself too:
+        $delay->begin->(undef,undef); # offsets
+
+        # replicate
+        $_->path( "$id/replicate" )
+            for my @post_to = map $_->clone, @peer_urls;
+
+
+        $c->app->log->info( sprintf "Replicating %s to %s instance(s).", $id, scalar @post_to);
+        $c->ua->put( $_, form => { paste => $paste, }, $delay->begin )
+            for @post_to;
+    },
+    sub {
+      my ($delay, $local_err, @remote_tx) = @_;
+
+      $c->app->log->info( sprintf "Replicate to [%s]: %s %s",
+            $_->req->url,
+            $_->success ? ($_->res->code,           $_->res->body) 
+                        : ($_->error->{code} // '', $_->error->{message} // '' )
+      ) for @remote_tx;
+
+      die $local_err if $local_err;
+
+      $c->redirect_to('show', paste_id => $id);
+    },
+  );
+  };
+
+put
+  '/:paste_id/replicate', sub {
+  my $c = shift;
+
+  $c->helpers->reply->not_found # I am alone, this is a trick.
+      unless @$paste_peers;
+
+  # maybe 409 if it already exists.
+  my $paste = $c->param('paste') || '';
+  my $id = Mojo::Util::sha1_sum(
+            encode 'UTF-8',
+            $paste
+  );
+
+  # looks bogus.
+  return $c->render( json => {error => 'sha1 mismatch' }, status => 400 )
+        if $c->stash('paste_id') ne $id;
+
   $c->delay(
     sub { $c->paste($id => $paste, shift->begin) },
     sub {
       my ($delay, $err) = @_;
       die $err if $err;
-      $c->redirect_to('show', paste_id => $id);
+      return $c->render( json => {ok => 'thanks'}, status => 201 )
     },
   );
   };

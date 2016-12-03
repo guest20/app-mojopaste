@@ -121,6 +121,26 @@ Check out L<Mojo::Server::Hypnotoad> for more hypnotoad options.
 
 =back
 
+=head1 REPLICATED SETUP
+
+If you want to run your pastebin on 2 computers, for the sake of scaling/failover/replication, you can.
+Simply tell each instance about the others and they'll PUT pastes at each other:
+
+    { hypnotoad   => { listen => ['http://*:80'] },
+      paste_peers => [qw[ http://paste-A http://paste-B http://paste-C ]] }
+
+or 
+
+    paste-A:~ PASTE_PEERS='http://paste-A http://paste-B http://paste-C' \
+          morbo -l 'http://*:80' ./script/mojopaste
+
+With this setup you can route web traffic to any one of the nodes and they'll relay the data
+to one another, which is great for high-read sites or sites who don't want to lose their paste content
+when a disk fails.
+
+It's kinda sad that you need to introduce all the nodes to each other, but if you're in need of a load
+balanced pastebin, you likely have some fancy service discovery too.
+
 =head1 OTHER PASTEBINS
 
 =over 2
