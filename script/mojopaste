@@ -27,6 +27,7 @@ app->log->warn(
 app->defaults(
   enable_charts => app->config('enable_charts') // $ENV{PASTE_ENABLE_CHARTS},
   enable_images => $WANT_MAGICK && $HAS_MAGICK,
+  enable_fetching=> $ENV{PASTE_ENABLE_FETCH} || 0,
   embed         => 'description,graph,heading,nav',
   error         => '',
   paste         => '',
@@ -121,6 +122,27 @@ post
   }
 
   my $paste = $c->param('paste') || '';
+
+  # downloads:
+  if ( $c->param('body_is_url') and $c->stash('enable_fetching') ) {
+
+    my $url = Mojo::URL->new($paste);
+    app->log->warn("Fetching '$url' ");
+    # TODO: rate limints per domain / client-ip.
+    #       log the url some place
+    $c->ua->get( $url, sub { my ($ua,$tx) = @_;
+        my $content = $tx->res->body;
+        my $id = Mojo::Util::sha1_sum($content);
+        my $save_path = File::Spec->catfile($paste_dir, $id); # maybe not an image
+        spurt($content, $save_path);
+
+        # This is where you'd replicate this thing to the others.
+        $c->redirect_to('show', paste_id => $id);
+        return $c->rendered(302);
+    });
+    return $c->render_later;
+    
+  }
 
   return $c->render('pastebin', placeholder => 'You neeed to enter some characters!', status => 400)
     unless $paste =~ /\w/;
@@ -361,6 +383,7 @@ __DATA__
   body.has-nav textarea, body.has-nav pre { padding: 20px; }
   textarea { width: 100%; height: 100%; border: 0; outline-offset: 0; outline: 0; display: block; }
   pre { margin-bottom: 60px; }
+  .top { background: #ddd; font-size: 14px; line-height: 1.5; text-decoration: none; text-align: center; padding: 7px 12px; margin-right: 3px; vertical-align: middle; display: block; float: left; cursor: pointer; }
   .btn { background: #ddd; font-size: 14px; line-height: 1.5; text-decoration: none; text-align: center; padding: 7px 12px; margin-right: 3px; vertical-align: middle; display: block; float: left; cursor: pointer; }
   .btn:hover { background: #d0d0d0; }
   .btn:focus { background: #ccc; outline: 0; }
@@ -445,6 +468,9 @@ __DATA__
   <button class="save btn" tabindex="2">Save</button>
 % if ($enable_images) {
   <input  class="save btn" type=file name=image_upload>
+% }
+% if ($enable_fetching) {
+  <div class=top><label><input type=checkbox name=body_is_url>Fetch content from url:</label></div>
 % }
   %= include 'powered_by'
 </nav>
