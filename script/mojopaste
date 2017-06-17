@@ -25,6 +25,7 @@ app->log->warn(
 ));
 
 app->defaults(
+  layout        => 'mojopaste',
   enable_charts => app->config('enable_charts') // $ENV{PASTE_ENABLE_CHARTS},
   enable_images => $WANT_MAGICK && $HAS_MAGICK,
   enable_fetching=> $ENV{PASTE_ENABLE_FETCH} || 0,
@@ -50,13 +51,6 @@ my @peer_urls = map Mojo::URL->new($_), @$paste_peers;
 my @image_extensions   = (qw[ png       jpg        gif       tiff ]);
 my @allowed_image_types= (qw[ image/png image/jpeg image/gif image/tiff ]);
 
-helper no_such_paste => sub {
-  my ($c, $err) = @_;
-  $c->app->log->debug("no_such_paste: $err");
-  $c->stash($_ => 'Could not find paste') for qw(error heading title);
-  $c->render(description => '', layout => 'mojopaste', status => 404);
-};
-
 helper paste => sub {
   my $cb    = pop;
   my $write = @_ == 3;
@@ -79,23 +73,22 @@ helper paste => sub {
   return $c->$cb($@ || $!, $paste);
 };
 
-get '/' => {layout => 'mojopaste'} => sub {
+get '/' =>  sub {
   my $c = shift;
   return unless my $id = $c->param('edit');
   return $c->delay(
     sub { $c->paste($id => shift->begin) },
     sub {
       my ($delay, $err, $paste) = @_;
-      return $c->no_such_paste($err || 'Could not find paste') if $err or !$paste;
+      return $c->reply->not_found  if $err or !$paste;
       return $c->param(paste => $paste)->render;
     },
   );
   },
   'pastebin';
 
-post
-  '/' => {layout => 'mojopaste'},
-  sub {
+# put /
+post '/' => sub {
   my $c = shift;
 
   return $c->render(text => 'File is too big.', status => 200)
@@ -186,8 +179,7 @@ post
   );
   };
 
-put
-  '/:paste_id/replicate', sub {
+put '/:paste_id/replicate', sub {
   my $c = shift;
 
   $c->helpers->reply->not_found # I am alone, this is a trick.
@@ -229,7 +221,6 @@ get '/:paste_id', sub {
         sprintf '<img src="%s.%s" height="%s" width="%s">',
           $paste_id, $info->{file_ext},
           $info->{height},$info->{width}), 
-          layout => 'mojopaste',
         ) if not exists $info->{error};
   }
 
@@ -291,7 +282,7 @@ get '/:paste_id', sub {
     sub {
       my ($delay, $err, $paste) = @_;
       if ($err or !$paste) {
-        $c->no_such_paste($err || 'Could not find paste');
+        return $c->reply->not_found 
       }
       elsif ($c->param('raw') or $format eq 'txt') {
         $c->res->headers->content_type('text/plain; charset=utf-8');
@@ -300,15 +291,13 @@ get '/:paste_id', sub {
       else {
         $c->res->headers->header('X-Plain-Text-URL' => $c->url_for(format => 'txt')->userinfo(undef)->to_abs);
         $c->stash(embed => $c->param('embed')) if $c->param('embed');
-        $c->render(layout => 'mojopaste', paste => $paste);
+        $c->render(paste => $paste);
       }
     },
   );
 }, 'show';
 
-get
-  '/:paste_id/chart' => {layout => 'mojopaste'},
-  sub {
+get '/:paste_id/chart' => sub {
   my $c = shift;
   my $chart = {element => 'chart', data => [], hideHover => true, resize => true};
   my ($heading, $description, $error) = ('', '', '');
@@ -317,7 +306,7 @@ get
     sub { $c->paste($c->stash('paste_id'), shift->begin) },
     sub {
       my ($delay, $err, $paste) = @_;
-      return $c->no_such_paste($err || "Could not find paste") if $err or !$paste;
+      return $c->reply->not_found if $err or !$paste;
 
       while ($paste =~ s!^\s*(?://|\#)(.*)!!m) {
         $description .= $1 if $heading;
@@ -457,6 +446,21 @@ __DATA__
 </head>
 
 <body class="<%= $embed =~ /nav/ ? 'has-nav' : '' %>">
+% if ($embed =~ /nav/) { # New,Edit,Raw,Graph  ; Chart: New,Edit,Data
+<nav>
+  %= link_to 'New', 'pastebin',                                                class => 'btn'
+  % if(my $paste_id = stash 'paste_id') {
+  %= link_to 'Edit',  url_for('pastebin')->query(edit => $paste_id),           class => 'btn'
+  % if (stash 'chart') { 
+  %= link_to 'Data',  url_for('show', paste_id => $paste_id ),                 class => 'btn'
+  % } else { # It'd be nice to not offer a chart for an image:
+  %= link_to 'Graph', url_for('chart'),                                        class => 'btn' if $enable_charts
+  % }
+  %= link_to 'Raw',   url_for('show', paste_id => $paste_id, format => 'txt'), class => 'btn'
+  % }
+  %= include 'powered_by'
+</nav>
+% }
   %= content
 </body>
 </html>
@@ -477,14 +481,6 @@ __DATA__
 %= text_area 'paste', placeholder => $placeholder, tabindex => 1
 % end
 @@ chart.html.ep
-% if ($embed =~ /nav/) {
-<nav>
-  %= link_to 'New', 'pastebin', class => 'btn'
-  %= link_to 'Edit', url_for('pastebin')->query(edit => $paste_id), class => 'btn'
-  %= link_to 'Data', url_for('show', paste_id => $paste_id), class => 'btn'
-  %= include 'powered_by'
-</nav>
-% }
 % if ($heading and $embed =~ /heading/) {
 <h2><%= $heading %></h2>
 % }
@@ -511,17 +507,12 @@ try {
   % }
 % }
 @@ show.html.ep
-% if ($embed =~ /nav/) {
-<nav>
-  %= link_to 'New', 'pastebin', class => 'btn'
-  %= link_to 'Edit', url_for('pastebin')->query(edit => $paste_id), class => 'btn'
-  %= link_to 'Raw', url_for('show', paste_id => $paste_id, format => 'txt'), class => 'btn'
-  %= link_to 'Graph', url_for('chart'), class => 'btn' if $enable_charts
-  %= include 'powered_by'
-</nav>
-% }
 <pre class="prettyprint linenums"><%= $error || $paste %></pre>
 @@ powered_by.html.ep
 <a class="btn powered-by" href="<%= $source_url %>" title="Get mojopaste"><%= $source_title %></a>
 @@ show.txt.ep
 Paste not found: <%= $paste_id %>
+@@ not_found.html.ep
+<b>Not Found.</b>
+@@ not_found.txt.ep
+Not found.
