@@ -54,15 +54,16 @@ my @allowed_image_types= (qw[ image/png image/jpeg image/gif image/tiff ]);
 
 helper read_paste => sub { my ($c, $id, $cb) = @_;
   my $paste;
-  eval { $paste = decode('UTF-8', slurp(File::Spec->catfile($paste_dir, $id))) ;1 }
+  eval { $paste = decode('UTF-8', path($paste_dir, $id)->slurp) ;1 }
   or do { return $c->cb( $@, undef ) };
   return $c->$cb(undef, $paste)
 };
 helper write_paste => sub { my ($c, $id, $paste, $cb) = @_;
-  eval { spurt(encode('UTF-8', $paste), File::Spec->catfile($paste_dir, $id)); 1}
+  eval  { path($paste_dir, $id)->spurt(encode('UTF-8', $paste)) }
   or do { return $c->$cb($@, undef); };
   return $c->$cb(undef, $paste);
 };
+
 
 get '/' =>  sub {
   my $c = shift;
