@@ -4,6 +4,7 @@ use Mojolicious::Lite;
 use Mojo::Util qw(encode decode spurt slurp);
 use File::Path ();
 use File::Spec;
+use Mojo::File 'path';
 use Mojo::JSON 'true';
 
 plugin 'config' if $ENV{MOJO_CONFIG};
@@ -51,33 +52,23 @@ my @peer_urls = map Mojo::URL->new($_), @$paste_peers;
 my @image_extensions   = (qw[ png       jpg        gif       tiff ]);
 my @allowed_image_types= (qw[ image/png image/jpeg image/gif image/tiff ]);
 
-helper paste => sub {
-  my $cb    = pop;
-  my $write = @_ == 3;
-  my ($c, $id, $paste) = @_;
-
-  if (!$id or $id =~ m!\W!) {
-    return $c->$cb("Hacking attempt! paste_id=($id)", "");
-  }
-
-  local ($!, $@);
-  eval {
-    if ($write) {
-      spurt(encode('UTF-8', $paste), File::Spec->catfile($paste_dir, $id));
-    }
-    else {
-      $paste = decode('UTF-8', slurp(File::Spec->catfile($paste_dir, $id)));
-    }
-  };
-
-  return $c->$cb($@ || $!, $paste);
+helper read_paste => sub { my ($c, $id, $cb) = @_;
+  my $paste;
+  eval { $paste = decode('UTF-8', slurp(File::Spec->catfile($paste_dir, $id))) ;1 }
+  or do { return $c->cb( $@, undef ) };
+  return $c->$cb(undef, $paste)
+};
+helper write_paste => sub { my ($c, $id, $paste, $cb) = @_;
+  eval { spurt(encode('UTF-8', $paste), File::Spec->catfile($paste_dir, $id)); 1}
+  or do { return $c->$cb($@, undef); };
+  return $c->$cb(undef, $paste);
 };
 
 get '/' =>  sub {
   my $c = shift;
   return unless my $id = $c->param('edit');
   return $c->delay(
-    sub { $c->paste($id => shift->begin) },
+    sub { $c->read_paste($id => shift->begin) },
     sub {
       my ($delay, $err, $paste) = @_;
       return $c->reply->not_found  if $err or !$paste;
@@ -147,7 +138,7 @@ post '/' => sub {
 
         if (not @peer_urls) { 
             # 0 peers listed, just write locally.
-            return $c->paste($id => $paste, $delay->begin(1,1))
+            return $c->write_paste($id => $paste, $delay->begin(1,1))
         }
 
         # With peers listed, we replicate to everyone.
@@ -197,7 +188,7 @@ put '/:paste_id/replicate', sub {
         if $c->stash('paste_id') ne $id;
 
   $c->delay(
-    sub { $c->paste($id => $paste, shift->begin) },
+    sub { $c->read_paste($id => $paste, shift->begin) },
     sub {
       my ($delay, $err) = @_;
       die $err if $err;
@@ -278,7 +269,7 @@ get '/:paste_id', sub {
   }
 
   $c->delay(
-    sub { $c->paste($paste_id, shift->begin) },
+    sub { $c->read_paste($paste_id, shift->begin) },
     sub {
       my ($delay, $err, $paste) = @_;
       if ($err or !$paste) {
@@ -303,7 +294,7 @@ get '/:paste_id/chart' => sub {
   my ($heading, $description, $error) = ('', '', '');
 
   $c->delay(
-    sub { $c->paste($c->stash('paste_id'), shift->begin) },
+    sub { $c->read_paste($c->stash('paste_id'), shift->begin) },
     sub {
       my ($delay, $err, $paste) = @_;
       return $c->reply->not_found if $err or !$paste;
