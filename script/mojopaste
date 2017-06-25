@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 use Mojolicious::Lite;
 
-use Mojo::Util qw(encode decode spurt slurp);
+use Mojo::Util qw(encode decode);
 use File::Path ();
 use File::Spec;
 use Mojo::File 'path';
