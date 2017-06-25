@@ -52,6 +52,14 @@ my @peer_urls = map Mojo::URL->new($_), @$paste_peers;
 my @image_extensions   = (qw[ png       jpg        gif       tiff ]);
 my @allowed_image_types= (qw[ image/png image/jpeg image/gif image/tiff ]);
 
+sub blob_name_for { my $content = shift;   
+    # it might be nice if this took something other than the whole glob of text
+    # but I can't think of a way to sha the content while streaming it to a file
+    # whos name is the sha.
+
+    my $id = Mojo::Util::sha1_sum( $content );
+}
+
 helper read_paste => sub { my ($c, $id, $cb) = @_;
   my $paste;
   eval { $paste = decode('UTF-8', path($paste_dir, $id)->slurp) ;1 }
@@ -63,7 +71,6 @@ helper write_paste => sub { my ($c, $id, $paste, $cb) = @_;
   or do { return $c->$cb($@, undef); };
   return $c->$cb(undef, $paste);
 };
-
 
 get '/' =>  sub {
   my $c = shift;
@@ -92,7 +99,7 @@ post '/' => sub {
       my $size = $up->size;
       my $name = $up->filename;
 
-      my $id = Mojo::Util::sha1_sum($up->slurp);
+      my $id = blob_name_for($up->slurp);
       my $image_path = File::Spec->catfile($paste_dir, $id);
 
       # At this point the file has already been uploaded, so I don't save
@@ -117,7 +124,8 @@ post '/' => sub {
     #       log the url some place
     $c->ua->get( $url, sub { my ($ua,$tx) = @_;
         my $content = $tx->res->body;
-        my $id = Mojo::Util::sha1_sum($content);
+
+        my $id = blob_name_for($content);
         my $save_path = File::Spec->catfile($paste_dir, $id); # maybe not an image
         spurt($content, $save_path);
 
@@ -132,7 +140,7 @@ post '/' => sub {
   return $c->render('pastebin', placeholder => 'You neeed to enter some characters!', status => 400)
     unless $paste =~ /\w/;
 
-  my $id = Mojo::Util::sha1_sum( encode 'UTF-8', $paste );
+  my $id = blob_name_for( encode 'UTF-8', $paste );
   $c->delay(
     sub {
         my $delay = shift;
@@ -179,10 +187,7 @@ put '/:paste_id/replicate', sub {
 
   # maybe 409 if it already exists.
   my $paste = $c->param('paste') || '';
-  my $id = Mojo::Util::sha1_sum(
-            encode 'UTF-8',
-            $paste
-  );
+  my $id = blob_name_for( encode 'UTF-8', $paste);
 
   # looks bogus.
   return $c->render( json => {error => 'sha1 mismatch' }, status => 400 )
