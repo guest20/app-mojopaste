@@ -3,7 +3,6 @@ use Mojolicious::Lite;
 
 use Mojo::Util qw(encode decode);
 use File::Path ();
-use File::Spec;
 use Mojo::File 'path';
 use Mojo::JSON 'true';
 
@@ -100,7 +99,7 @@ post '/' => sub {
       my $name = $up->filename;
 
       my $id = blob_name_for($up->slurp);
-      my $image_path = File::Spec->catfile($paste_dir, $id);
+      my $image_path = path($paste_dir, $id);
 
       # At this point the file has already been uploaded, so I don't save
       # any bandwidth by declining, but whatever.
@@ -126,8 +125,7 @@ post '/' => sub {
         my $content = $tx->res->body;
 
         my $id = blob_name_for($content);
-        my $save_path = File::Spec->catfile($paste_dir, $id); # maybe not an image
-        spurt($content, $save_path);
+        path($paste_dir, $id )->spurt($content);
 
         # This is where you'd replicate this thing to the others.
         $c->redirect_to('show', paste_id => $id);
@@ -208,8 +206,8 @@ get '/:paste_id', sub {
   my $format   = $c->stash('format') || '';
   my $paste_id = $c->stash('paste_id');
 
-  my $image_path = File::Spec->catfile($paste_dir, $paste_id);
-  my $info=Image::Info::image_info( $image_path ); # does blocking reads to get magic numbers.
+  my $image_path = path($paste_dir, $paste_id);
+  my $info=Image::Info::image_info( $image_path->open ); # does blocking reads to get magic numbers.
 
   if ( app->defaults('enable_images') and not $format ) {
       # only hijack the requests to just-the-id requests if the blob is an image.
@@ -223,7 +221,7 @@ get '/:paste_id', sub {
 
   return $c->render(json => $info) 
     if not exists $info->{error} and grep $_ eq $format, qw[txt json];
-  # .json might make sense if filled with stat info for text pastes 
+    # .json might make sense if filled with stat info for text pastes 
    
 
   if (app->defaults('enable_images') and grep $format eq $_, @image_extensions) {
