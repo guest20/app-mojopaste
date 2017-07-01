@@ -5,6 +5,7 @@ use Mojo::Util qw(encode decode);
 use File::Path ();
 use Mojo::File 'path';
 use Mojo::JSON 'true';
+use lib './lib';
 
 plugin 'config' if $ENV{MOJO_CONFIG};
 
@@ -14,7 +15,6 @@ my ($HAS_MAGICK, $HAS_NO_MAGICK) =
 
 app->log->warn(
   # scale images down 
-  # replicate images
   # type detection from Image::Info might be enough
   # perhaps clean up the json response from .txt on images
   # the use above likely ruins later checks
@@ -38,50 +38,20 @@ app->defaults(
   source_title  => 'Powered by Mojopaste',
 );
 
-my $paste_dir = app->config('paste_dir') || $ENV{PASTE_DIR} || 'paste';
--d $paste_dir or File::Path::mkpath($paste_dir) or die "mkpath $paste_dir: $!";
-
-# All the urls pastes should be replicated to, including my own root:
-my $paste_peers = exists $ENV{MOJO_CONFIG}
-                    ? app->config('paste_peers')    || []
-                    : [split ' ', $ENV{PASTE_PEERS} || '']
-                    ;
-my @peer_urls = map Mojo::URL->new($_), @$paste_peers;
+plugin 'App::mojopaste::Storage' => {
+  paste_dir => app->config('paste_dir') || $ENV{PASTE_DIR} || 'paste',
+  storage => 'YamlShas',
+};
 
 my @image_extensions   = (qw[ png       jpg        gif       tiff ]);
 my @allowed_image_types= (qw[ image/png image/jpeg image/gif image/tiff ]);
 
-sub blob_name_for { my $content = shift;   
-    # it might be nice if this took something other than the whole glob of text
-    # but I can't think of a way to sha the content while streaming it to a file
-    # whos name is the sha.
-
-    my $id = Mojo::Util::sha1_sum( $content );
-}
-
-helper read_paste => sub { my ($c, $id, $cb) = @_;
-  my $paste;
-  eval { $paste = decode('UTF-8', path($paste_dir, $id)->slurp) ;1 }
-  or do { return $c->cb( $@, undef ) };
-  return $c->$cb(undef, $paste)
-};
-helper write_paste => sub { my ($c, $id, $paste, $cb) = @_;
-  eval  { path($paste_dir, $id)->spurt(encode('UTF-8', $paste)) }
-  or do { return $c->$cb($@, undef); };
-  return $c->$cb(undef, $paste);
-};
-
 get '/' =>  sub {
   my $c = shift;
   return unless my $id = $c->param('edit');
-  return $c->delay(
-    sub { $c->read_paste($id => shift->begin) },
-    sub {
-      my ($delay, $err, $paste) = @_;
-      return $c->reply->not_found  if $err or !$paste;
-      return $c->param(paste => $paste)->render;
-    },
-  );
+  my ($blob) = app->store->fetch_by_id( $id );
+  return $c->reply->not_found  unless $blob;
+  return $c->param(paste => $blob->raw_content)->render;
   },
   'pastebin';
 
@@ -95,21 +65,10 @@ post '/' => sub {
   # uploads:
   my $up = $c->param('image_upload');
   if ( app->defaults('enable_images') and defined $up and $up->size ) {
-      my $size = $up->size;
-      my $name = $up->filename;
 
-      my $id = blob_name_for($up->slurp);
-      my $image_path = path($paste_dir, $id);
-
-      # At this point the file has already been uploaded, so I don't save
-      # any bandwidth by declining, but whatever.
-      return $c->redirect_to( "/" . $id . "?already_existed=1") if -e $image_path;
-
-      # This is where you'd replicate this thing to the others.
-
-      $up->move_to( $image_path ); # would be nicer if we didn't just ->slurp
-      app->log->info( "Received $size byte file $name as $id");
-      return $c->redirect_to( "/" . $id );
+      my $blob = app->store->add_from_file($up);
+      app->log->info(sprintf "Received %s byte file %s as %s", $blob->size // 0, $blob->path, $blob->id );
+      return $c->redirect_to('show', paste_id => $blob->id);
   }
 
   my $paste = $c->param('paste') || '';
@@ -122,14 +81,10 @@ post '/' => sub {
     # TODO: rate limints per domain / client-ip.
     #       log the url some place
     $c->ua->get( $url, sub { my ($ua,$tx) = @_;
-        my $content = $tx->res->body;
-
-        my $id = blob_name_for($content);
-        path($paste_dir, $id )->spurt($content);
-
-        # This is where you'd replicate this thing to the others.
-        $c->redirect_to('show', paste_id => $id);
-        return $c->rendered(302);
+        app->store->add_from_string($tx->res->body, { fetched => { from=>$url }}=> sub { my ($blob)=@_;
+            $c->redirect_to('show', paste_id => $blob->id);
+            return $c->rendered(302);
+        });
     });
     return $c->render_later;
     
@@ -138,104 +93,37 @@ post '/' => sub {
   return $c->render('pastebin', placeholder => 'You neeed to enter some characters!', status => 400)
     unless $paste =~ /\w/;
 
-  my $id = blob_name_for( encode 'UTF-8', $paste );
-  $c->delay(
-    sub {
-        my $delay = shift;
-
-        if (not @peer_urls) { 
-            # 0 peers listed, just write locally.
-            return $c->write_paste($id => $paste, $delay->begin(1,1))
-        }
-
-        # With peers listed, we replicate to everyone.
-        # Which means I have to replicate to myself too:
-        $delay->begin->(undef,undef); # offsets
-
-        # replicate
-        $_->path( "$id/replicate" )
-            for my @post_to = map $_->clone, @peer_urls;
-
-
-        $c->app->log->info( sprintf "Replicating %s to %s instance(s).", $id, scalar @post_to);
-        $c->ua->put( $_, form => { paste => $paste, }, $delay->begin )
-            for @post_to;
-    },
-    sub {
-      my ($delay, $local_err, @remote_tx) = @_;
-
-      $c->app->log->info( sprintf "Replicate to [%s]: %s %s",
-            $_->req->url,
-            $_->success ? ($_->res->code,           $_->res->body) 
-                        : ($_->error->{code} // '', $_->error->{message} // '' )
-      ) for @remote_tx;
-
-      die $local_err if $local_err;
-
-      $c->redirect_to('show', paste_id => $id);
-    },
-  );
+  app->store->add_from_string(
+    (encode 'UTF-8', $paste), sub { my $blob = shift;
+        return $c->redirect_to('show', paste_id => $blob->id);
+    });
+    return $c->render_later;
   };
 
-put '/:paste_id/replicate', sub {
-  my $c = shift;
-
-  $c->helpers->reply->not_found # I am alone, this is a trick.
-      unless @$paste_peers;
-
-  # maybe 409 if it already exists.
-  my $paste = $c->param('paste') || '';
-  my $id = blob_name_for( encode 'UTF-8', $paste);
-
-  # looks bogus.
-  return $c->render( json => {error => 'sha1 mismatch' }, status => 400 )
-        if $c->stash('paste_id') ne $id;
-
-  $c->delay(
-    sub { $c->read_paste($id => $paste, shift->begin) },
-    sub {
-      my ($delay, $err) = @_;
-      die $err if $err;
-      return $c->render( json => {ok => 'thanks'}, status => 201 )
-    },
-  );
-  };
 
 get '/:paste_id', sub {
   my $c = shift;
   my $format   = $c->stash('format') || '';
   my $paste_id = $c->stash('paste_id');
 
-  my $image_path = path($paste_dir, $paste_id);
-  my $info=Image::Info::image_info( $image_path->open ); # does blocking reads to get magic numbers.
+  my ($blob) = app->store->fetch_by_id( $paste_id );
 
+  return $c->reply->not_found if not $blob;
+
+  my $info = $blob->image_info;
   if ( app->defaults('enable_images') and not $format ) {
-      # only hijack the requests to just-the-id requests if the blob is an image.
       return $c->render(
-        paste => app->b( 
-        sprintf '<img src="%s.%s" height="%s" width="%s">',
-          $paste_id, $info->{file_ext},
-          $info->{height},$info->{width}), 
-        ) if not exists $info->{error};
+        'show_image',
+          src   => $paste_id .'.'. $info->{file_ext},
+          height=> $info->{height},
+          width => $info->{width},
+        ) if not exists $info->{error}
   }
 
   return $c->render(json => $info) 
     if not exists $info->{error} and grep $_ eq $format, qw[txt json];
-    # .json might make sense if filled with stat info for text pastes 
-   
 
   if (app->defaults('enable_images') and grep $format eq $_, @image_extensions) {
-      # .raw -> just text, .jpg -> blob. Perhaps cache it if $info is expensive
-      # an attempt could be made to convert between the $format and the image type
-
-      # use Image::Magick;
-      # my $x = Image::Magick->new;
-      # $x->Read("image.jpg");
-      # $x->Clone
-      # $x->Resize(geometry => '48x48'); # this one if fine, good quality
-      # $x->Write(filename => "image1.jpg");
-      # $x->Resize(geometry => '500x500'); # this one is created from image1.jpg so the quality is poor
-      # $x->Write("image2.jpg");
 
       if ( exists $info->{error} ) {
           # if it's not an image, bail out
@@ -263,7 +151,7 @@ get '/:paste_id', sub {
          $headers->add( 'Content-Type', $content_type . ';name=' . $paste_id );
          $headers->add( 'Content-Disposition', $content_disposition . ';filename=' . $paste_id ); # possibly reflected download
 
-      my $asset = Mojo::Asset::File->new( path => $image_path );
+      my $asset = Mojo::Asset::File->new( path => $blob->blob_path);
          $headers->add( 'Content-Length' => $asset->size );
 
         $c->res->content->headers($headers);     
@@ -272,24 +160,15 @@ get '/:paste_id', sub {
         return $c->rendered($status);
   }
 
-  $c->delay(
-    sub { $c->read_paste($paste_id, shift->begin) },
-    sub {
-      my ($delay, $err, $paste) = @_;
-      if ($err or !$paste) {
-        return $c->reply->not_found 
-      }
-      elsif ($c->param('raw') or $format eq 'txt') {
-        $c->res->headers->content_type('text/plain; charset=utf-8');
-        $c->render(text => $paste);
-      }
-      else {
-        $c->res->headers->header('X-Plain-Text-URL' => $c->url_for(format => 'txt')->userinfo(undef)->to_abs);
-        $c->stash(embed => $c->param('embed')) if $c->param('embed');
-        $c->render(paste => $paste);
-      }
-    },
-  );
+  if ($c->param('raw') or $format eq 'txt') {
+    $c->res->headers->content_type('text/plain; charset=utf-8');
+    return $c->render(text => decode 'UTF-8', $blob->blob_path->slurp);
+  }
+
+  $c->res->headers->header('X-Plain-Text-URL' => $c->url_for(format => 'txt')->userinfo(undef)->to_abs);
+  $c->stash(embed => $c->param('embed')) if $c->param('embed');
+  $c->render(paste =>  decode 'UTF-8',$blob->blob_path->slurp);
+
 }, 'show';
 
 get '/:paste_id/chart' => sub {
@@ -297,28 +176,25 @@ get '/:paste_id/chart' => sub {
   my $chart = {element => 'chart', data => [], hideHover => true, resize => true};
   my ($heading, $description, $error) = ('', '', '');
 
-  $c->delay(
-    sub { $c->read_paste($c->stash('paste_id'), shift->begin) },
-    sub {
-      my ($delay, $err, $paste) = @_;
-      return $c->reply->not_found if $err or !$paste;
+  my ($blob) = app->store->fetch_by_id( $c->stash('paste_id') );
+  return $c->reply->not_found if not $blob;
 
-      while ($paste =~ s!^\s*(?://|\#)(.*)!!m) {
+    my $paste = $blob->raw_content;
+    while ($paste =~ s!^\s*(?://|\#)(.*)!!m) {
         $description .= $1 if $heading;
         $heading ||= $1;
-      }
-
-      eval {
-        _chart($chart, grep { $_ =~ /\S/ } split /\r?\n/, $paste);
-      } or do {
-        $error = $@ || 'Unknown error';
-        $error =~ s!\s*at .*? line \d+.*!!s;
-      };
-
-      $c->stash(embed => $c->param('embed')) if $c->param('embed');
-      $c->render(chart => $chart, description => $description // '', error => $error, heading => $heading);
     }
-  );
+
+    eval {
+      _chart($chart, grep { $_ =~ /\S/ } split /\r?\n/, $paste);
+    } or do {
+      $error = $@ || 'Unknown error';
+      $error =~ s!\s*at .*? line \d+.*!!s;
+    };
+
+    $c->stash(embed => $c->param('embed')) if $c->param('embed');
+    $c->render(chart => $chart, description => $description // '', error => $error, heading => $heading);
+
   }, 'chart' if app->defaults('enable_charts');
 
 app->start;
@@ -483,6 +359,8 @@ try {
 % }
 @@ show.html.ep
 <pre class="prettyprint linenums"><%= $error || $paste %></pre>
+@@ show_image.html.ep
+<img src="<%= $src %>" height="<%= $height %>" width="<%= $width %>">
 @@ powered_by.html.ep
 <a class="btn powered-by" href="<%= $source_url %>" title="Get mojopaste"><%= $source_title %></a>
 @@ show.txt.ep
