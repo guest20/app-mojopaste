@@ -9,25 +9,10 @@ use lib './lib';
 
 plugin 'config' if $ENV{MOJO_CONFIG};
 
-my $WANT_MAGICK = app->config('enable_images') // $ENV{PASTE_ENABLE_IMAGES};
-my ($HAS_MAGICK, $HAS_NO_MAGICK) = 
-  eval "use Image::Info; 1" ? (1, undef) : (0, $@);
-
-app->log->warn(
-  # scale images down 
-  # type detection from Image::Info might be enough
-  # perhaps clean up the json response from .txt on images
-  # the use above likely ruins later checks
-  (not $WANT_MAGICK) ? "Image support disabled." :
-  ($HAS_MAGICK       ? "Image support enabled."  
-                     : ("Image support requested but you don't have Image::Magick",
-                        " so I'll ignore your request.", $HAS_NO_MAGICK )
-));
-
 app->defaults(
   layout        => 'mojopaste',
   enable_charts => app->config('enable_charts') // $ENV{PASTE_ENABLE_CHARTS},
-  enable_images => $WANT_MAGICK && $HAS_MAGICK,
+  enable_uploads=>  $ENV{PASTE_ENABLE_UPLOADS} // $ENV{PASTE_ENABLE_IMAGES},
   enable_fetching=> $ENV{PASTE_ENABLE_FETCH} || 0,
   embed         => 'description,graph,heading,nav',
   error         => '',
@@ -61,10 +46,11 @@ post '/' => sub {
 
   return $c->render(text => 'File is too big.', status => 200)
     if $c->req->is_limit_exceeded;
+    # MOJO_MAX_MESSAGE_SIZE=16MB MOJO_MAX_LINE_SIZE=8k MOJO_MAX_BUFFER_SIZE=256k
 
   # uploads:
-  my $up = $c->param('image_upload');
-  if ( app->defaults('enable_images') and defined $up and $up->size ) {
+  my $up = $c->param('upload');
+  if ( app->defaults('enable_uploads') and defined $up and $up->size ) {
 
       my $blob = app->store->add_from_file($up);
       app->log->info(sprintf "Received %s byte file %s as %s", $blob->size // 0, $blob->path, $blob->id );
@@ -111,7 +97,7 @@ get '/:paste_id', sub {
   return $c->reply->not_found if not $blob;
 
   my $info = $blob->image_info;
-  if ( app->defaults('enable_images') and not $format ) {
+  if ( app->defaults('enable_uploads') and not $format ) {
       return $c->render(
         'show_image',
           src   => $paste_id .'.'. $info->{file_ext},
@@ -123,7 +109,7 @@ get '/:paste_id', sub {
   return $c->render(json => $info) 
     if not exists $info->{error} and grep $_ eq $format, qw[txt json];
 
-  if (app->defaults('enable_images') and grep $format eq $_, @image_extensions) {
+  if (app->defaults('enable_uploads') and grep $format eq $_, @image_extensions) {
 
       if ( exists $info->{error} ) {
           # if it's not an image, bail out
@@ -321,8 +307,8 @@ __DATA__
 %= form_for 'invalid', method => 'post', (enctype => 'multipart/form-data') => begin
 <nav>
   <button class="save btn" tabindex="2">Save</button>
-% if ($enable_images) {
-  <input  class="save btn" type=file name=image_upload>
+% if ($enable_uploads) {
+  <input  class="save btn" type=file name=upload>
 % }
 % if ($enable_fetching) {
   <div class=top><label><input type=checkbox name=body_is_url>Fetch content from url:</label></div>
