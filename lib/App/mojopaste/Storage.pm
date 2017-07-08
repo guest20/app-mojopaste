@@ -1,23 +1,22 @@
 package App::mojopaste::Storage;
 #ABSTRACT: paste storage
 use Mojo::Base 'Mojolicious::Plugin';
+use Mojo::Loader qw[ load_class ];
 
-use App::mojopaste::Storage::YamlShas;
 has storage => sub {
-    App::mojopaste::Storage::YamlShas->new;
+  die "Too late to decide storage, plase pass 'storage' => to the plugin"
 };
 
 has 'app';
 sub register { my ($plugin,$app,$conf) = @_;
 
-  die "Only 'YamlShas' is supported for use"
-    if $conf->{storage} ne 'YamlShas';
-
+  my ($backend,$e) =  __PACKAGE__ . '::' . ($conf->{storage} // 'Sha1sOnDisk');
+  die "'$backend' isn't a very good backend: $e" if $e = load_class $backend;
 
   # make sure we're nice and leaky:
   $plugin->app($app);
   $plugin->storage(
-    App::mojopaste::Storage::YamlShas->new(
+    $backend->new(
       plugin        => $plugin,
       storage_root  => $conf->{paste_dir},
   ));
@@ -28,15 +27,4 @@ sub register { my ($plugin,$app,$conf) = @_;
   });
 }
 
-# add_from_path   ( $path, $cb )
-# add_from_url    ( \@urls, \%options, $cb )
-# add_from_string ( $path, $cb )
-# fetch_by_id     ( $id,   $cb )
-
-
-# if_modified_since for urls?
-
-# some kind of blind iterator.
-
-# some kind of matching thinger.
 1
