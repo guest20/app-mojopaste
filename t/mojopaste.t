@@ -3,6 +3,8 @@ use t::Helper;
 
 my $t   = t::Helper->t;
 my $raw = "var foo = 123; # cool!\n";
+my $raws_id = Mojo::Util::sha1_sum( $raw ); 
+use Mojo::Util;
 
 $t->get_ok('/')->status_is(200)->element_exists('form[method="post"][action="invalid"]', 'javascript is required')
   ->element_exists('button')->element_exists('a[href="https://metacpan.org/pod/App::mojopaste#DESCRIPTION"]');
@@ -11,7 +13,7 @@ $t->post_ok('/')->status_is(400)->element_exists('form[method="post"][action="in
   ->element_exists('html > body');
 $t->post_ok('/', form => {paste => '', p => 1})->status_is(400, 'Need at least one character');
 
-$t->post_ok('/', form => {paste => $raw, p => 1})->status_is(302)->header_like('Location', qr[^/\w{12}$]);
+$t->post_ok('/', form => {paste => $raw, p => 1})->status_is(302)->header_like('Location', qr[^/$raws_id$]);
 
 my ($id) = $t->tx->res->headers->location =~ m!/(\w+)$!;
 $t->get_ok($t->tx->res->headers->location)->status_is(200)->element_exists(qq(a[href="/"]))
