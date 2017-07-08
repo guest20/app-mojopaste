@@ -25,7 +25,7 @@ app->defaults(
 
 plugin 'App::mojopaste::Storage' => {
   paste_dir => app->config('paste_dir') || $ENV{PASTE_DIR} || 'paste',
-  storage => 'YamlShas',
+  storage => 'Sha1sOnDisk',
 };
 
 my @image_extensions   = (qw[ png       jpg        gif       tiff ]);
