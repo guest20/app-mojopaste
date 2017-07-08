@@ -2,5 +2,7 @@
 requires "Mojolicious" => "6.39";
 requires "Text::CSV"   => "1.30";
 
-requires "Image::Info"; 
+#
+requires "Image::Info" =>  "1.38"; 
+
 test_requires "Test::More" => "0.88";
