@@ -19,11 +19,13 @@ has paste_dir => sub {
 
 use Mojo::File 'path';
 sub parse_ids { my $store=shift;
-  map { my ($first_two,$the_next) = /(..)(.*)/;
-    +{
+  map { my ($first_two,$the_next);
+       (($first_two,$the_next) = /^([0-9a-f]{2})([0-9a-f]{38})$/)
+    ? +{
       hold_path => path($store->paste_dir, $first_two, $the_next,),
       blob_path => path($store->paste_dir, $first_two, $the_next,'raw'),
       id => $_ }
+    : ()
   } @_
 }
 
