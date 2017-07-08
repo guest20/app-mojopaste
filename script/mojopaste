@@ -95,12 +95,14 @@ get '/:paste_id', sub {
   my ($blob) = app->store->fetch_by_id( $paste_id );
 
   return $c->reply->not_found if not $blob;
+  $c->stash( blob => $blob );
 
-  my $info = $blob->image_info;
+  use Image::Info; 
+  my $info = Image::Info::image_info( $blob->blob_path->open);
   if ( app->defaults('enable_uploads') and not $format ) {
       return $c->render(
         'show_image',
-          src   => $paste_id .'.'. $info->{file_ext},
+          src   =>  "/$paste_id.".$info->{file_ext},
           height=> $info->{height},
           width => $info->{width},
         ) if not exists $info->{error}

@@ -37,14 +37,4 @@ sub raw_content {
     $_[0]->blob_path->slurp;
 } # slurp
 
-# It would be nice to move this to a plugin system:
-sub image_info {
-
-  use Image::Info; # optionally?
-  my $info=Image::Info::image_info(
-        $_[0]->blob_path->open
-  ); # does blocking reads to get magic numbers.
-
-}
-
 ;1
