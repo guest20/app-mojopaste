@@ -4,5 +4,6 @@ requires "Text::CSV"   => "1.30";
 
 #
 requires "Image::Info" =>  "1.38"; 
+requires "YAML" => "1.15";
 
 test_requires "Test::More" => "0.88";

@@ -10,9 +10,9 @@ has [qw[ plugin storage_root ]] => sub {
 use Mojo::File 'path';
 
 has paste_dir => sub {
-my $paste_dir = path($_[0]->storage_root);
--d $paste_dir or $paste_dir->make_path
-              or die "mkpath $paste_dir: $!";
+    my $paste_dir = path($_[0]->storage_root);
+    -d $paste_dir or $paste_dir->make_path
+                  or die "mkpath $paste_dir: $!";
     $paste_dir;
 };
 
@@ -35,7 +35,12 @@ sub fetch_by_id {
 
     my @pastes =  map { 
         (-e $_->{hold_path})
-          ?  App::mojopaste::Stored->new( %$_ )
+          ?  App::mojopaste::Stored->new(
+            %$_,
+            ( -e $_->{meta_path} )
+              ?  ( meta =>  LoadFile $_->{meta_path} )
+              : ()
+          )
           : undef
     }
     $store->parse_ids($id);
@@ -49,14 +54,17 @@ use Mojo::Util qw(encode decode);
 
 use Time::HiRes qw[ time ];
 sub _wait_dequeue {my ($store) = @_;
+
 }
 sub _enqueue {my ($store,$blob) = @_;
   my $queue = path($store->paste_dir, 'new/');
   $queue->make_path unless -d $queue;
 
-  #link OLDFILE,NEWFILE
-  symlink $blob->hold_path,
-          $queue->child(time . "-$$");
+  # link OLDFILE,NEWFILE
+    symlink $blob->hold_path, $queue->child(time . "-$$");
+  # add a meta entry that says "still in processing queue"
+
+  
 }
 
 sub add_from_string { 
@@ -107,4 +115,5 @@ sub add_from_file {
   $cb ? $cb->($blob) : $blob
 
 }
+
 1

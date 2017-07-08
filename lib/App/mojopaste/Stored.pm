@@ -8,11 +8,9 @@ has [
   hold_path  => # directory all the bits go in 
   blob_path  => # the file name for the blob
   meta_path  => # path to the meta file
-
+  
 ];
 
-has [qw[ created_date created_by ]];
-has [qw[ encoding ]];
 
 has blob_stat =>  sub { [stat $_[0]->blob_path] };
 #  7 size     total size of file, in bytes
@@ -25,12 +23,9 @@ has size => sub { $_[0]->blob_stat->[7] };
 sub path { $_[0]->blob_path }
 
 has 'storage';
-
-has 'meta' => sub {
-    use YAML qw[ LoadFile ];
-    # use Mojo::Util qw(encode decode);
-    LoadFile $_[0]->meta_path
-};
+has meta => sub { };
+has [qw[ encoding mime_type]] => sub { 'unknown' };
+has children => sub { [] };
 
 
 sub raw_content {
@@ -38,3 +33,4 @@ sub raw_content {
 } # slurp
 
 ;1
+

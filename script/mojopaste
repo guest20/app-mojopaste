@@ -159,6 +159,7 @@ get '/:paste_id', sub {
 
 }, 'show';
 
+
 get '/:paste_id/chart' => sub {
   my $c = shift;
   my $chart = {element => 'chart', data => [], hideHover => true, resize => true};
@@ -345,6 +346,7 @@ try {
 </script>
   % }
 % }
+
 @@ show.html.ep
 <pre class="prettyprint linenums"><%= $error || $paste %></pre>
 @@ show_image.html.ep
