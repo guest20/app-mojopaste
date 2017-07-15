@@ -31,7 +31,7 @@ sub parse_ids { my $store=shift;
 
 sub fetch_by_id {
     my $cb = (@_ and 'CODE' eq ref $_[-1]) ? pop : ();
-    my ($store,$id) = @_;
+    my ($store,@id) = @_;
 
     use YAML qw[ LoadFile ];
 
@@ -40,7 +40,7 @@ sub fetch_by_id {
           ?  App::mojopaste::Stored->new( %$_ )
           : undef
     }
-    $store->parse_ids($id);
+    $store->parse_ids(@id);
 
   $cb ? $cb->(@pastes) : @pastes
     
@@ -97,4 +97,22 @@ sub add_from_file {
 
 }
 
+sub fetch_in_groups {
+  my ($store, $size, $cb) = @_;
+
+  # 42 hex chars, but olol
+  my @h=(0..9,'a'..'f');
+  my @partitions = map { my $f=$_; map { "$f$_" } @h } @h;
+ 
+  #something forky
+  for (@partitions) { 
+      s{/}{} for my @ids =
+      map path($_)->to_rel($store->paste_dir),
+        my @blobs =
+            glob path($store->paste_dir, $_, "*"); 
+      #warn $_, @ids;
+      $store->fetch_by_id( @ids, $cb );
+  }
+
+}
 1

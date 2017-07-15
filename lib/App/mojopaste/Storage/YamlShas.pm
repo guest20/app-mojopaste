@@ -31,6 +31,7 @@ sub parse_ids { my $store=shift;
 }
 
 use App::mojopaste::Stored;
+use YAML qw[ LoadFile ];
 sub fetch_by_id {
     my $cb = (@_ and 'CODE' eq ref $_[-1]) ? pop : ();
     my ($store,$id) = @_;
@@ -69,6 +70,7 @@ sub _enqueue {my ($store,$blob) = @_;
   
 }
 
+
 sub add_from_string { 
   my $cb = (@_ and 'CODE' eq ref $_[-1]) ? pop : ();
   my ($store,$content,$meta) = @_;
@@ -106,8 +108,9 @@ sub add_from_file {
   $blob->meta({
     %{$meta||{}},
     source => { method => '_from_file' },
-    upload => { size => $up->size,
-                name => $up->filename, # almost always faked.
+    upload => {
+              $up->can('size')     ? ( size => $up->size ) : (),
+              $up->can('filename') ? ( name => $up->filename ) : (),
               }, 
   });
   $blob->meta_path->spurt( Dump $blob->meta );
@@ -115,6 +118,25 @@ sub add_from_file {
 
 
   $cb ? $cb->($blob) : $blob
+
+}
+
+sub fetch_in_groups {
+  my ($store, $size, $cb) = @_;
+
+  # 42 hex chars, but olol
+  my @h=(0..9,'a'..'f');
+  my @partitions = map { my $f=$_; map { "$f$_" } @h } @h;
+ 
+  #something forky
+  for (@partitions) { 
+      s{/}{} for my @ids =
+      map path($_)->to_rel($store->paste_dir),
+        my @blobs =
+            glob path($store->paste_dir, $_, "*"); 
+      #warn $_, @ids;
+      $store->fetch_by_id( @ids, $cb );
+  }
 
 }
 
