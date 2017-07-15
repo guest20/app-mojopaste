@@ -4,7 +4,7 @@ use Mojolicious::Lite;
 use Mojo::Util qw(encode decode);
 use File::Path ();
 use Mojo::File 'path';
-use Mojo::JSON 'true';
+use Mojo::JSON qw[ true decode_json encode_json ];
 use lib './lib';
 
 plugin 'config' if $ENV{MOJO_CONFIG};
@@ -48,11 +48,13 @@ post '/' => sub {
     if $c->req->is_limit_exceeded;
     # MOJO_MAX_MESSAGE_SIZE=16MB MOJO_MAX_LINE_SIZE=8k MOJO_MAX_BUFFER_SIZE=256k
 
+  my ($meta,$meta_param) = {};
+  $meta = decode_json $meta_param if $meta_param = $c->signed_param( 'meta' );
+
   # uploads:
   my $up = $c->param('upload');
   if ( app->defaults('enable_uploads') and defined $up and $up->size ) {
-
-      my $blob = app->store->add_from_file($up);
+      my $blob = app->store->add_from_file($up, $meta);
       app->log->info(sprintf "Received %s byte file %s as %s", $blob->size // 0, $blob->path, $blob->id );
       return $c->redirect_to('show', paste_id => $blob->id);
   }
@@ -67,7 +69,10 @@ post '/' => sub {
     # TODO: rate limints per domain / client-ip.
     #       log the url some place
     $c->ua->get( $url, sub { my ($ua,$tx) = @_;
-        app->store->add_from_string($tx->res->body, { fetched => { from=>$url }}=> sub { my ($blob)=@_;
+        app->store->add_from_string($tx->res->body,
+            { %$meta, fetched => { from=>$url }, }
+            => sub { my ($blob)=@_;
+            app->log->info(sprintf "Fetched %s byte file %s as %s from %s", $blob->size // 0, $blob->path, $blob->id , $url);
             $c->redirect_to('show', paste_id => $blob->id);
             return $c->rendered(302);
         });
@@ -80,12 +85,34 @@ post '/' => sub {
     unless $paste =~ /\w/;
 
   app->store->add_from_string(
-    (encode 'UTF-8', $paste), sub { my $blob = shift;
+    (encode 'UTF-8', $paste), $meta, sub { my $blob = shift;
+        app->log->info(sprintf "Posted %s byte file %s as %s", $blob->size // 0, $blob->path, $blob->id );
         return $c->redirect_to('show', paste_id => $blob->id);
     });
     return $c->render_later;
   };
 
+get '/:paste_id/meta', sub {
+  my $c = shift;
+  my $format   = $c->stash('format') || '';
+  my $paste_id = $c->stash('paste_id');
+
+  my ($blob) = app->store->fetch_by_id( $paste_id );
+#       xml  => {text => $blob->meta},
+  use YAML qw[ Dump ];
+  $c->respond_to(
+        json => {json => $blob->meta },
+        yaml => sub { $c = shift;
+                      my $headers = Mojo::Headers->new();
+                         $headers->add( 'Content-Type',        'text/plain;name=' . $paste_id );
+                         $headers->add( 'Content-Disposition', 'inline;filename=' . $paste_id );
+                         $c->res->content->headers($headers);
+                         $c->render(text => Dump $blob->meta)
+
+        },
+  );
+
+}, 'yaml';
 
 get '/:paste_id', sub {
   my $c = shift;
@@ -208,6 +235,48 @@ sub _chart {
   die 'Could not parse CSV data.' unless @{$chart->{data}};
   return $chart;
 }
+
+#
+# Signed params... should I be a Plugin or something?
+#
+
+# Sign a value:
+sub Mojolicious::Controller::sign_param{ my ($self, $value) = @_;
+  my $checksum = Mojo::Util::hmac_sha1_sum($value, $self->app->secrets->[0]);
+  return "$value--$checksum" 
+}
+
+# Get one:
+sub Mojolicious::Controller::signed_param { my ($self, $name ) = @_;
+  return $self->every_signed_param( $name )->[-1];
+}
+
+# Get all of 'em:
+sub Mojolicious::Controller::every_signed_param { my ($self, $name) = @_;
+
+  my $secrets = $self->app->secrets;
+  my @results;
+  for my $value (@{$self->every_param($name)}) {
+
+    # Check signature with rotating secrets
+    if ($value =~ s/--([^\-]+)$//) {
+      my $signature = $1;
+
+      my $valid;
+      for my $secret (@$secrets) {
+        my $check = Mojo::Util::hmac_sha1_sum($value, $secret);
+        ++$valid and last if Mojo::Util::secure_compare($signature, $check);
+      }
+      if ($valid) { push @results, $value }
+      else { $self->app->log->debug(qq{Param "$name" has a bad signature}) }
+    }
+
+    else { $self->app->log->debug(qq{Param "$name" is not signed}) }
+  }
+
+  return \@results;
+}
+
 
 __DATA__
 @@ css/mojopaste.css
