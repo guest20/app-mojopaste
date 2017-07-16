@@ -11,6 +11,7 @@ plugin 'config' if $ENV{MOJO_CONFIG};
 
 app->defaults(
   layout        => 'mojopaste',
+  log_path      => app->config('log_path') // $ENV{PASTE_LOG_PATH},
   enable_charts => app->config('enable_charts') // $ENV{PASTE_ENABLE_CHARTS},
   enable_uploads=>  $ENV{PASTE_ENABLE_UPLOADS} // $ENV{PASTE_ENABLE_IMAGES},
   enable_fetching=> $ENV{PASTE_ENABLE_FETCH} || 0,
@@ -27,6 +28,8 @@ plugin 'App::mojopaste::Storage' => {
   paste_dir => app->config('paste_dir') || $ENV{PASTE_DIR} || 'paste',
   storage => 'YamlShas',
 };
+
+app->log->path( app->defaults('log_path') ) if app->defaults('log_path');
 
 my @image_extensions   = (qw[ png       jpg        gif       tiff ]);
 my @allowed_image_types= (qw[ image/png image/jpeg image/gif image/tiff ]);
