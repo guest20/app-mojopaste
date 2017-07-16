@@ -20,12 +20,12 @@ app->defaults(
   placeholder   => 'Enter your text here or select an image above and then press the "Save" button above.',
   title         => 'Mojopaste',
   source_url    => 'https://metacpan.org/pod/App::mojopaste#DESCRIPTION',
-  source_title  => 'Powered by Mojopaste',
+  source_title  => 'Similar to Mojopaste',
 );
 
 plugin 'App::mojopaste::Storage' => {
   paste_dir => app->config('paste_dir') || $ENV{PASTE_DIR} || 'paste',
-  storage => 'Sha1sOnDisk',
+  storage => 'YamlShas',
 };
 
 my @image_extensions   = (qw[ png       jpg        gif       tiff ]);
