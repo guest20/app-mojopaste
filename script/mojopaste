@@ -84,11 +84,21 @@ post '/' => sub {
     
   }
 
-  return $c->render('pastebin', placeholder => 'You neeed to enter some characters!', status => 400)
+  return $c->render('pastebin',
+        placeholder => 'You neeed to enter some characters!',
+        status => 400)
     unless $paste =~ /\w/;
 
+  my ($bytes, $bytes_arent_utf8);
+  eval {
+    $bytes = encode 'UTF-8', $paste
+  ;1} or do { 
+    $meta->{bytes_arent_utf8} = $bytes_arent_utf8 = $@;
+    $bytes = $paste;
+  };
+
   app->store->add_from_string(
-    (encode 'UTF-8', $paste), $meta, sub { my $blob = shift;
+    $bytes, $meta, sub { my $blob = shift;
         app->log->info(sprintf "Posted %s byte file %s as %s", $blob->size // 0, $blob->path, $blob->id );
         return $c->redirect_to('show', paste_id => $blob->id);
     });
