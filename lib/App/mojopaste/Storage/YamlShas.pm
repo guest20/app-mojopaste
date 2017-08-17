@@ -55,21 +55,6 @@ sub fetch_by_id {
 use YAML qw[ Dump ];
 use Mojo::Util qw(encode decode);
 
-use Time::HiRes qw[ time ];
-sub _wait_dequeue {my ($store) = @_;
-
-}
-sub _enqueue {my ($store,$blob) = @_;
-  my $queue = path($store->paste_dir, 'new/');
-  $queue->make_path unless -d $queue;
-
-  # link OLDFILE,NEWFILE
-    symlink $blob->hold_path, $queue->child(time . "-$$");
-  # add a meta entry that says "still in processing queue"
-
-  
-}
-
 
 sub add_from_string { 
   my $cb = (@_ and 'CODE' eq ref $_[-1]) ? pop : ();
@@ -88,7 +73,6 @@ sub add_from_string {
     source => { method => '_from_string' }
   });
   $blob->meta_path->spurt( Dump $blob->meta );
-  $store->_enqueue($blob);
 
   $cb ? $cb->($blob) : $blob
 
@@ -114,8 +98,6 @@ sub add_from_file {
               }, 
   });
   $blob->meta_path->spurt( Dump $blob->meta );
-  $store->_enqueue($blob);
-
 
   $cb ? $cb->($blob) : $blob
 

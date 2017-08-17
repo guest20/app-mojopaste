@@ -46,21 +46,6 @@ sub fetch_by_id {
     
 }
 
-
-# links to each pastes hold_dir can be found in new/date-pid
-# you can do something with the links from cron (expire or something)
-use Time::HiRes qw[ time ];
-sub _wait_dequeue {my ($store) = @_;
-
-}
-sub _enqueue {my ($store,$blob) = @_;
-  my $queue = path($store->paste_dir, 'new/');
-  $queue->make_path unless -d $queue;
-
-  # link OLDFILE,NEWFILE
-    symlink $blob->hold_path, $queue->child(time . "-$$");
-}
-
 sub add_from_string { 
   my $cb = (@_ and 'CODE' eq ref $_[-1]) ? pop : ();
   my ($store,$content) = @_;
@@ -73,7 +58,6 @@ sub add_from_string {
   $blob->hold_path->make_path;
 
   $blob->blob_path->spurt($encoded);
-  $store->_enqueue($blob);
 
   $cb ? $cb->($blob) : $blob
 
@@ -90,7 +74,6 @@ sub add_from_file {
   $blob->hold_path->make_path;
 
   $up->move_to( $blob->blob_path );
-  $store->_enqueue($blob);
 
 
   $cb ? $cb->($blob) : $blob
